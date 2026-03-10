@@ -5,6 +5,7 @@ import { type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
+import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -553,6 +554,27 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">About</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Installed build information for this client.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-background px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{APP_BASE_NAME}</p>
+                    <p className="text-xs text-muted-foreground">{APP_STAGE_LABEL} channel</p>
+                  </div>
+                  <code className="rounded bg-muted px-2 py-1 text-xs text-foreground">
+                    v{APP_VERSION}
+                  </code>
+                </div>
+              </div>
             </section>
           </div>
         </div>
