@@ -61,7 +61,9 @@ function readReleasePackageVersions(rootDir: string): ReadonlyArray<string> {
 
 function resolveBaseVersionFromWorkspace(rootDir: string): string {
   const normalizedVersions = [
-    ...new Set(readReleasePackageVersions(rootDir).map((version) => normalizeForkBaseVersion(version))),
+    ...new Set(
+      readReleasePackageVersions(rootDir).map((version) => normalizeForkBaseVersion(version)),
+    ),
   ];
 
   if (normalizedVersions.length !== 1) {
