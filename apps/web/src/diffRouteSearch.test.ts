@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import { closeDiffSearchParams, parseDiffRouteSearch } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -70,5 +70,26 @@ describe("parseDiffRouteSearch", () => {
     expect(parsed).toEqual({
       diff: "1",
     });
+  });
+});
+
+describe("closeDiffSearchParams", () => {
+  it("keeps explicit closed keys so retainSearchParams does not restore diff state", () => {
+    const closed = closeDiffSearchParams({
+      diff: "1",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/app.ts",
+      panel: "work",
+    });
+
+    expect(closed).toEqual({
+      diff: undefined,
+      diffTurnId: undefined,
+      diffFilePath: undefined,
+      panel: "work",
+    });
+    expect(Object.hasOwn(closed, "diff")).toBe(true);
+    expect(Object.hasOwn(closed, "diffTurnId")).toBe(true);
+    expect(Object.hasOwn(closed, "diffFilePath")).toBe(true);
   });
 });
