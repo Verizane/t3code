@@ -8,11 +8,13 @@ INSTALL_SENTINEL=".install-complete"
 
 repo="$DEFAULT_REPO"
 install_root="$DEFAULT_INSTALL_ROOT"
+rebuild="false"
+rebuild_local="false"
 passthrough_args=()
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run-latest-release.sh [--repo owner/repo] [--install-root <path>] [-- <t3 args...>]
+Usage: scripts/run-latest-release.sh [--rebuild] [--rebuild-local] [--repo owner/repo] [--install-root <path>] [-- <t3 args...>]
 EOF
 }
 
@@ -41,6 +43,14 @@ while (($# > 0)); do
       install_root="$2"
       shift 2
       ;;
+    --rebuild)
+      rebuild="true"
+      shift
+      ;;
+    --rebuild-local)
+      rebuild_local="true"
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -57,6 +67,11 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+if [[ "$rebuild" == "true" && "$rebuild_local" == "true" ]]; then
+  printf 'Cannot combine --rebuild and --rebuild-local\n' >&2
+  exit 1
+fi
 
 require_command bun
 require_command curl
@@ -155,7 +170,59 @@ install_release() {
   trap - RETURN
 }
 
-if is_installed; then
+rebuild_local_release() {
+  local parent_dir temp_dir source_dir
+  parent_dir="$(dirname "$version_dir")"
+  temp_dir="${parent_dir}/$(basename "$version_dir").tmp-$$"
+  source_dir="$version_dir"
+
+  if [[ ! -d "$source_dir" ]]; then
+    printf 'Missing local release source: %s\n' "$source_dir" >&2
+    exit 1
+  fi
+
+  rm -rf "$temp_dir"
+  mkdir -p "$parent_dir"
+
+  trap 'rm -rf "$temp_dir"' RETURN
+
+  printf 'Copying local source from %s into %s\n' "$source_dir" "$temp_dir"
+  mkdir -p "$temp_dir"
+  tar \
+    --exclude=node_modules \
+    --exclude=.git \
+    -C "$source_dir" \
+    -cf - \
+    . \
+    | tar -xf - -C "$temp_dir"
+
+  (
+    cd "$temp_dir"
+    bun install --frozen-lockfile
+  )
+
+  (
+    cd "$temp_dir/apps/web"
+    bun run build
+  )
+
+  (
+    cd "$temp_dir"
+    bun apps/server/scripts/cli.ts build
+  )
+
+  printf 'ok\n' > "${temp_dir}/${INSTALL_SENTINEL}"
+  rm -rf "$version_dir"
+  mv "$temp_dir" "$version_dir"
+
+  trap - RETURN
+}
+
+if [[ "$rebuild_local" == "true" ]]; then
+  rebuild_local_release
+elif [[ "$rebuild" == "true" ]]; then
+  install_release
+elif is_installed; then
   printf 'Using installed release %s from %s\n' "$tag_name" "$version_dir"
 else
   install_release
