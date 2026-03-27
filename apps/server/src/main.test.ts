@@ -36,7 +36,6 @@ const findAvailablePort = vi.fn((preferred: number) => Effect.succeed(preferred)
 const testLayer = Layer.mergeAll(
   Layer.succeed(CliConfig, {
     cwd: "/tmp/t3-test-workspace",
-    fixPath: Effect.void,
     resolveStaticDir: Effect.undefined,
   } satisfies CliConfigShape),
   Layer.succeed(NetService, {

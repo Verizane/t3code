@@ -72,11 +72,6 @@ export interface CliConfigShape {
   readonly cwd: string;
 
   /**
-   * Apply OS-specific PATH normalization.
-   */
-  readonly fixPath: Effect.Effect<void>;
-
-  /**
    * Resolve static web asset directory for server mode.
    */
   readonly resolveStaticDir: Effect.Effect<string | undefined>;
@@ -95,7 +90,6 @@ export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
       const path = yield* Path.Path;
       return {
         cwd: process.cwd(),
-        fixPath: Effect.sync(fixPath),
         resolveStaticDir: resolveStaticDir().pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
@@ -380,8 +374,7 @@ const makeServerRuntimeProgram = (input: CliInput) =>
 
 const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
-    yield* cliConfig.fixPath;
+    yield* Effect.sync(fixPath);
     return yield* makeServerRuntimeProgram(input);
   });
 
@@ -452,5 +445,7 @@ export const t3Cli = Command.make("t3", {
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(
   Command.withDescription("Run the T3 Code server."),
-  Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),
+  Command.withHandler((input) =>
+    Effect.sync(fixPath).pipe(Effect.flatMap(() => Effect.scoped(makeServerProgram(input)))),
+  ),
 );
