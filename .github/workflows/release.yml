@@ -251,7 +251,6 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
-            release-assets/*.zip
             release-assets/*.AppImage
             release-assets/*.blockmap
           fail_on_unmatched_files: true
