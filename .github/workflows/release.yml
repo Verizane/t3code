@@ -252,5 +252,4 @@ jobs:
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
             release-assets/*.AppImage
-            release-assets/*.blockmap
           fail_on_unmatched_files: true
