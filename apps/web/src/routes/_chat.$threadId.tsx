@@ -12,7 +12,6 @@ import {
 } from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
-  closeDiffSearchParams,
   type DiffRouteSearch,
   parseDiffRouteSearch,
   stripDiffSearchParams,

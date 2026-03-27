@@ -374,8 +374,7 @@ const makeServerRuntimeProgram = (input: CliInput) =>
 
 const makeServerProgram = (input: CliInput) =>
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
-    yield* cliConfig.fixPath;
+    yield* Effect.sync(fixPath);
     return yield* makeServerRuntimeProgram(input);
   });
 
