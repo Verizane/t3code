@@ -1,5 +1,7 @@
 import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
 
+import { resolveCommandForSpawn } from "./bunCommandResolution";
+
 export interface ProcessRunOptions {
   cwd?: string | undefined;
   timeoutMs?: number | undefined;
@@ -130,12 +132,14 @@ export async function runProcess(
   args: readonly string[],
   options: ProcessRunOptions = {},
 ): Promise<ProcessRunResult> {
+  const resolvedCommand = resolveCommandForSpawn(command, options.env);
+
   const timeoutMs = options.timeoutMs ?? 60_000;
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
   const outputMode = options.outputMode ?? "error";
 
   return new Promise<ProcessRunResult>((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(resolvedCommand, args, {
       cwd: options.cwd,
       env: options.env,
       stdio: "pipe",

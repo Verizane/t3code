@@ -1,6 +1,25 @@
 import * as OS from "node:os";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { Effect, Path } from "effect";
 import { readPathFromLoginShell, resolveLoginShell } from "@t3tools/shared/shell";
+
+export function withUserLocalBunPath(
+  currentPath: string | undefined,
+  homeDir: string,
+  bunExists: boolean = existsSync(path.join(homeDir, ".bun/bin/bun")),
+): string | undefined {
+  if (!bunExists) return currentPath;
+
+  const bunBinDir = path.join(homeDir, ".bun/bin");
+  const pathEntries = (currentPath ?? "").split(path.delimiter).filter(Boolean);
+
+  if (pathEntries.includes(bunBinDir)) {
+    return currentPath;
+  }
+
+  return [bunBinDir, ...pathEntries].join(path.delimiter);
+}
 
 export function fixPath(
   options: {
@@ -13,13 +32,14 @@ export function fixPath(
   if (platform !== "darwin" && platform !== "linux") return;
 
   const env = options.env ?? process.env;
+  const homeDir = OS.homedir();
 
   try {
     const shell = resolveLoginShell(platform, env.SHELL);
     if (!shell) return;
     const result = (options.readPath ?? readPathFromLoginShell)(shell);
     if (result) {
-      env.PATH = result;
+      env.PATH = withUserLocalBunPath(result, homeDir);
     }
   } catch {
     // Silently ignore — keep default PATH
