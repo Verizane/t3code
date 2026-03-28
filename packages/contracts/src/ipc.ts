@@ -20,7 +20,17 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  GuidedThreadFinishInput,
+  GuidedThreadFinishResult,
+  GuidedThreadGetStateInput,
+  GuidedThreadSetModeInput,
+  GuidedThreadState,
+} from "./guided";
+import type {
+  ProjectConfig,
+  ProjectGetConfigInput,
   ProjectSearchEntriesInput,
+  ProjectSetPrimaryBranchInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
@@ -139,6 +149,8 @@ export interface NativeApi {
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
+    getConfig: (input: ProjectGetConfigInput) => Promise<ProjectConfig>;
+    setPrimaryBranch: (input: ProjectSetPrimaryBranchInput) => Promise<ProjectConfig>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
@@ -163,6 +175,11 @@ export interface NativeApi {
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
     runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
     onActionProgress: (callback: (event: GitActionProgressEvent) => void) => () => void;
+  };
+  guided: {
+    getThreadState: (input: GuidedThreadGetStateInput) => Promise<GuidedThreadState>;
+    setThreadMode: (input: GuidedThreadSetModeInput) => Promise<GuidedThreadState>;
+    finishThread: (input: GuidedThreadFinishInput) => Promise<GuidedThreadFinishResult>;
   };
   contextMenu: {
     show: <T extends string>(

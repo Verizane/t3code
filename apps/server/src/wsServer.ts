@@ -61,6 +61,7 @@ import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
+import { GuidedThreadService } from "./guided/Services/GuidedThreadService.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
@@ -176,6 +177,7 @@ export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
   | GitManager
   | GitCore
+  | GuidedThreadService
   | TerminalManager
   | Keybindings
   | ServerSettingsService
@@ -223,6 +225,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const runPromise = Effect.runPromiseWith(runtimeServices);
 
   const gitManager = yield* GitManager;
+  const guidedThreadService = yield* GuidedThreadService;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const serverSettingsManager = yield* ServerSettingsService;
@@ -732,6 +735,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         );
       }
 
+      case WS_METHODS.projectsGetConfig: {
+        const body = stripRequestTag(request.body);
+        return yield* guidedThreadService.getProjectConfig(body.projectId);
+      }
+
+      case WS_METHODS.projectsSetPrimaryBranch: {
+        const body = stripRequestTag(request.body);
+        return yield* guidedThreadService.setProjectPrimaryBranch(body);
+      }
+
       case WS_METHODS.projectsWriteFile: {
         const body = stripRequestTag(request.body);
         return yield* workspaceFileSystem.writeFile(body).pipe(
@@ -778,6 +791,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.gitPreparePullRequestThread: {
         const body = stripRequestTag(request.body);
         return yield* gitManager.preparePullRequestThread(body);
+      }
+
+      case WS_METHODS.guidedGetThreadState: {
+        const body = stripRequestTag(request.body);
+        return yield* guidedThreadService.getThreadState(body.threadId);
+      }
+
+      case WS_METHODS.guidedSetThreadMode: {
+        const body = stripRequestTag(request.body);
+        return yield* guidedThreadService.setThreadMode(body);
+      }
+
+      case WS_METHODS.guidedFinishThread: {
+        const body = stripRequestTag(request.body);
+        return yield* guidedThreadService.finishThread(body);
       }
 
       case WS_METHODS.gitListBranches: {

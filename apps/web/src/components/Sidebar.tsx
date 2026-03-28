@@ -38,6 +38,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  DEFAULT_PROJECT_PRIMARY_BRANCH,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
@@ -45,7 +46,7 @@ import {
   type GitStatusResult,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
@@ -67,6 +68,11 @@ import {
 } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitStatusQueryOptions } from "../lib/gitReactQuery";
+import {
+  projectConfigQueryOptions,
+  projectQueryKeys,
+  projectSetPrimaryBranchMutationOptions,
+} from "../lib/projectReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -88,6 +94,16 @@ import {
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
 import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -458,6 +474,7 @@ export default function Sidebar() {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
@@ -478,7 +495,15 @@ export default function Sidebar() {
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const [newPrimaryBranch, setNewPrimaryBranch] = useState(DEFAULT_PROJECT_PRIMARY_BRANCH);
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingProjectPrimaryBranch, setEditingProjectPrimaryBranch] = useState<{
+    projectId: ProjectId;
+    projectName: string;
+  } | null>(null);
+  const [editingProjectPrimaryBranchValue, setEditingProjectPrimaryBranchValue] = useState(
+    DEFAULT_PROJECT_PRIMARY_BRANCH,
+  );
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<ThreadId | null>(null);
@@ -569,6 +594,22 @@ export default function Sidebar() {
       refetchInterval: 60_000,
     })),
   });
+  const projectConfigQueries = useQueries({
+    queries: projects.map((project) => projectConfigQueryOptions(project.id)),
+  });
+  const projectPrimaryBranchById = useMemo(() => {
+    const map = new Map<ProjectId, string>();
+    for (let index = 0; index < projects.length; index += 1) {
+      const project = projects[index];
+      if (!project) continue;
+      map.set(
+        project.id,
+        projectConfigQueries[index]?.data?.primaryBranch ?? DEFAULT_PROJECT_PRIMARY_BRANCH,
+      );
+    }
+    return map;
+  }, [projectConfigQueries, projects]);
+  const setProjectPrimaryBranchMutation = useMutation(projectSetPrimaryBranchMutationOptions());
   const prByThreadId = useMemo(() => {
     const statusByCwd = new Map<string, GitStatusResult>();
     for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
@@ -654,6 +695,7 @@ export default function Sidebar() {
       const finishAddingProject = () => {
         setIsAddingProject(false);
         setNewCwd("");
+        setNewPrimaryBranch(DEFAULT_PROJECT_PRIMARY_BRANCH);
         setAddProjectError(null);
         setAddingProject(false);
       };
@@ -668,6 +710,7 @@ export default function Sidebar() {
       const projectId = newProjectId();
       const createdAt = new Date().toISOString();
       const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
+      const primaryBranch = newPrimaryBranch.trim() || DEFAULT_PROJECT_PRIMARY_BRANCH;
       try {
         await api.orchestration.dispatchCommand({
           type: "project.create",
@@ -681,6 +724,13 @@ export default function Sidebar() {
           },
           createdAt,
         });
+        if (primaryBranch !== DEFAULT_PROJECT_PRIMARY_BRANCH) {
+          await api.projects.setPrimaryBranch({
+            projectId,
+            primaryBranch,
+          });
+          void queryClient.invalidateQueries({ queryKey: projectQueryKeys.config(projectId) });
+        }
         await handleNewThread(projectId, {
           envMode: appSettings.defaultThreadEnvMode,
         }).catch(() => undefined);
@@ -706,6 +756,8 @@ export default function Sidebar() {
       handleNewThread,
       isAddingProject,
       projects,
+      newPrimaryBranch,
+      queryClient,
       shouldBrowseForProjectImmediately,
       appSettings.defaultThreadEnvMode,
     ],
@@ -715,7 +767,8 @@ export default function Sidebar() {
     void addProjectFromPath(newCwd);
   };
 
-  const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
+  const canAddProject =
+    newCwd.trim().length > 0 && newPrimaryBranch.trim().length > 0 && !isAddingProject;
 
   const handlePickFolder = async () => {
     const api = readNativeApi();
@@ -741,7 +794,13 @@ export default function Sidebar() {
       void handlePickFolder();
       return;
     }
-    setAddingProject((prev) => !prev);
+    setAddingProject((prev) => {
+      const next = !prev;
+      if (next) {
+        setNewPrimaryBranch(DEFAULT_PROJECT_PRIMARY_BRANCH);
+      }
+      return next;
+    });
   };
 
   const cancelRename = useCallback(() => {
@@ -1019,12 +1078,23 @@ export default function Sidebar() {
       const clicked = await api.contextMenu.show(
         [
           { id: "copy-path", label: "Copy Project Path" },
+          { id: "edit-primary-branch", label: "Edit Primary Branch" },
           { id: "delete", label: "Remove project", destructive: true },
         ],
         position,
       );
       if (clicked === "copy-path") {
         copyPathToClipboard(project.cwd, { path: project.cwd });
+        return;
+      }
+      if (clicked === "edit-primary-branch") {
+        setEditingProjectPrimaryBranch({
+          projectId,
+          projectName: project.name,
+        });
+        setEditingProjectPrimaryBranchValue(
+          projectPrimaryBranchById.get(projectId) ?? DEFAULT_PROJECT_PRIMARY_BRANCH,
+        );
         return;
       }
       if (clicked !== "delete") return;
@@ -1069,9 +1139,48 @@ export default function Sidebar() {
       copyPathToClipboard,
       getDraftThreadByProjectId,
       projects,
+      projectPrimaryBranchById,
       threads,
     ],
   );
+
+  const saveProjectPrimaryBranch = useCallback(async () => {
+    if (!editingProjectPrimaryBranch) return;
+    const primaryBranch = editingProjectPrimaryBranchValue.trim();
+    if (primaryBranch.length === 0) {
+      toastManager.add({
+        type: "warning",
+        title: "Primary branch is required",
+      });
+      return;
+    }
+    try {
+      await setProjectPrimaryBranchMutation.mutateAsync({
+        projectId: editingProjectPrimaryBranch.projectId,
+        primaryBranch,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.config(editingProjectPrimaryBranch.projectId),
+      });
+      setEditingProjectPrimaryBranch(null);
+      toastManager.add({
+        type: "success",
+        title: "Primary branch updated",
+        description: `${editingProjectPrimaryBranch.projectName} now rebases onto "${primaryBranch}".`,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Failed to update primary branch",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    }
+  }, [
+    editingProjectPrimaryBranch,
+    editingProjectPrimaryBranchValue,
+    queryClient,
+    setProjectPrimaryBranchMutation,
+  ]);
 
   const projectDnDSensors = useSensors(
     useSensor(PointerSensor, {
@@ -1686,11 +1795,26 @@ export default function Sidebar() {
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    void handleNewThread(project.id, {
-                      envMode: resolveSidebarNewThreadEnvMode({
-                        defaultEnvMode: appSettings.defaultThreadEnvMode,
-                      }),
-                    });
+                    const api = readNativeApi();
+                    if (!api) return;
+                    void api.contextMenu
+                      .show(
+                        [
+                          { id: "normal", label: "Normal" },
+                          { id: "guided", label: "Guided" },
+                        ],
+                        { x: event.clientX, y: event.clientY },
+                      )
+                      .then((mode) => {
+                        if (!mode) return;
+                        return handleNewThread(project.id, {
+                          envMode: resolveSidebarNewThreadEnvMode({
+                            defaultEnvMode: appSettings.defaultThreadEnvMode,
+                          }),
+                          workflowMode: mode === "guided" ? "guided" : "normal",
+                        });
+                      })
+                      .catch(() => undefined);
                   }}
                 >
                   <SquarePenIcon className="size-3.5" />
@@ -2089,6 +2213,17 @@ export default function Sidebar() {
                       {isAddingProject ? "Adding..." : "Add"}
                     </button>
                   </div>
+                  <div className="mt-1.5">
+                    <Input
+                      value={newPrimaryBranch}
+                      onChange={(event) => setNewPrimaryBranch(event.target.value)}
+                      placeholder={DEFAULT_PROJECT_PRIMARY_BRANCH}
+                      className="h-8 font-mono text-xs"
+                    />
+                    <p className="mt-1 px-0.5 text-[10px] text-muted-foreground/60">
+                      Primary branch for guided rebases
+                    </p>
+                  </div>
                   {addProjectError && (
                     <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
                       {addProjectError}
@@ -2158,6 +2293,54 @@ export default function Sidebar() {
           </SidebarFooter>
         </>
       )}
+      <Dialog
+        open={editingProjectPrimaryBranch !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingProjectPrimaryBranch(null);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Primary Branch</DialogTitle>
+            <DialogDescription>
+              Guided threads in this project will rebase onto this branch after each WIP commit.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-medium text-foreground">
+                {editingProjectPrimaryBranch?.projectName ?? "Project"}
+              </span>
+              <Input
+                value={editingProjectPrimaryBranchValue}
+                onChange={(event) => setEditingProjectPrimaryBranchValue(event.target.value)}
+                placeholder={DEFAULT_PROJECT_PRIMARY_BRANCH}
+                className="font-mono text-sm"
+              />
+            </label>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingProjectPrimaryBranch(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                void saveProjectPrimaryBranch();
+              }}
+              disabled={setProjectPrimaryBranchMutation.isPending}
+            >
+              {setProjectPrimaryBranchMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
     </>
   );
 }

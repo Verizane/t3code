@@ -1,9 +1,10 @@
-import type { ProjectSearchEntriesResult } from "@t3tools/contracts";
-import { queryOptions } from "@tanstack/react-query";
+import type { ProjectConfig, ProjectSearchEntriesResult } from "@t3tools/contracts";
+import { mutationOptions, queryOptions } from "@tanstack/react-query";
 import { ensureNativeApi } from "~/nativeApi";
 
 export const projectQueryKeys = {
   all: ["projects"] as const,
+  config: (projectId: string | null) => ["projects", "config", projectId] as const,
   searchEntries: (cwd: string | null, query: string, limit: number) =>
     ["projects", "search-entries", cwd, query, limit] as const,
 };
@@ -14,6 +15,30 @@ const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
   entries: [],
   truncated: false,
 };
+
+export function projectConfigQueryOptions(projectId: string | null) {
+  return queryOptions({
+    queryKey: projectQueryKeys.config(projectId),
+    queryFn: async () => {
+      if (!projectId) {
+        throw new Error("Project config is unavailable.");
+      }
+      return ensureNativeApi().projects.getConfig({
+        projectId: projectId as ProjectConfig["projectId"],
+      });
+    },
+    enabled: projectId !== null,
+    staleTime: 30_000,
+  });
+}
+
+export function projectSetPrimaryBranchMutationOptions() {
+  return mutationOptions({
+    mutationKey: ["projects", "mutation", "set-primary-branch"] as const,
+    mutationFn: async (input: { projectId: ProjectConfig["projectId"]; primaryBranch: string }) =>
+      ensureNativeApi().projects.setPrimaryBranch(input),
+  });
+}
 
 export function projectSearchEntriesQueryOptions(input: {
   cwd: string | null;

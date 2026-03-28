@@ -156,6 +156,8 @@ export function createWsNativeApi(): NativeApi {
         transport.subscribe(WS_CHANNELS.terminalEvent, (message) => callback(message.data)),
     },
     projects: {
+      getConfig: (input) => transport.request(WS_METHODS.projectsGetConfig, input),
+      setPrimaryBranch: (input) => transport.request(WS_METHODS.projectsSetPrimaryBranch, input),
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
     },
@@ -196,6 +198,12 @@ export function createWsNativeApi(): NativeApi {
           gitActionProgressListeners.delete(callback);
         };
       },
+    },
+    guided: {
+      getThreadState: (input) => transport.request(WS_METHODS.guidedGetThreadState, input),
+      setThreadMode: (input) => transport.request(WS_METHODS.guidedSetThreadMode, input),
+      finishThread: (input) =>
+        transport.request(WS_METHODS.guidedFinishThread, input, { timeoutMs: null }),
     },
     contextMenu: {
       show: async <T extends string>(

@@ -1,6 +1,7 @@
 import { Effect, Exit, Layer, ManagedRuntime, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { GuidedThreadService } from "../../guided/Services/GuidedThreadService.ts";
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -49,6 +50,18 @@ describe("OrchestrationReactor", () => {
             drain: Effect.void,
           }),
         ),
+        Layer.provideMerge(
+          Layer.succeed(GuidedThreadService, {
+            start: Effect.sync(() => {
+              started.push("guided-thread-service");
+            }),
+            getProjectConfig: () => Effect.die("not used in test"),
+            setProjectPrimaryBranch: () => Effect.die("not used in test"),
+            getThreadState: () => Effect.die("not used in test"),
+            setThreadMode: () => Effect.die("not used in test"),
+            finishThread: () => Effect.die("not used in test"),
+          }),
+        ),
       ),
     );
 
@@ -60,6 +73,7 @@ describe("OrchestrationReactor", () => {
       "provider-runtime-ingestion",
       "provider-command-reactor",
       "checkpoint-reactor",
+      "guided-thread-service",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

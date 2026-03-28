@@ -7,6 +7,8 @@ import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore";
 import { ServerConfig } from "./config";
 import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
+import { GuidedThreadStateRepositoryLive } from "./persistence/Layers/GuidedThreadStates";
+import { ProjectConfigRepositoryLive } from "./persistence/Layers/ProjectConfigs";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
@@ -38,6 +40,7 @@ import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResol
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import { GuidedThreadServiceLive } from "./guided/Layers/GuidedThreadService";
 
 type RuntimePtyAdapterLoader = {
   layer: Layer.Layer<PtyAdapter, never, FileSystem.FileSystem | Path.Path>;
@@ -127,10 +130,18 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(WorkspaceEntriesLive),
   );
+  const guidedThreadServiceLayer = GuidedThreadServiceLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(GitCoreLive),
+    Layer.provideMerge(textGenerationLayer),
+    Layer.provideMerge(ProjectConfigRepositoryLive),
+    Layer.provideMerge(GuidedThreadStateRepositoryLive),
+  );
   const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
     Layer.provideMerge(runtimeIngestionLayer),
     Layer.provideMerge(providerCommandReactorLayer),
     Layer.provideMerge(checkpointReactorLayer),
+    Layer.provideMerge(guidedThreadServiceLayer),
   );
 
   const terminalLayer = TerminalManagerLive.pipe(Layer.provide(makeRuntimePtyAdapterLayer()));
@@ -155,6 +166,7 @@ export function makeServerRuntimeServicesLayer() {
     workspaceFileSystemLayer,
     projectFaviconResolverLayer,
     gitManagerLayer,
+    guidedThreadServiceLayer,
     terminalLayer,
     KeybindingsLive,
   ).pipe(Layer.provideMerge(gitCoreLayer), Layer.provideMerge(NodeServices.layer));

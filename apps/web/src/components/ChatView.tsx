@@ -30,6 +30,11 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
+import {
+  guidedFinishThreadMutationOptions,
+  guidedQueryKeys,
+  guidedThreadStateQueryOptions,
+} from "~/lib/guidedReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -105,6 +110,15 @@ import {
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import { Separator } from "./ui/separator";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { cn, randomUUID } from "~/lib/utils";
@@ -509,6 +523,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [guidedFinishDialogOpen, setGuidedFinishDialogOpen] = useState(false);
   const [pendingPullRequestSetupRequest, setPendingPullRequestSetupRequest] =
     useState<PendingPullRequestSetupRequest | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -666,6 +681,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const guidedThreadStateQuery = useQuery(
+    guidedThreadStateQueryOptions(isServerThread ? activeThreadId : null),
+  );
+  const activeThreadWorkflowMode = isServerThread
+    ? (guidedThreadStateQuery.data?.workflowMode ?? "normal")
+    : (draftThread?.workflowMode ?? "normal");
+  const trackedGuidedCommitCount = guidedThreadStateQuery.data?.trackedCommitCount ?? 0;
+  const guidedFinishThreadMutation = useMutation(guidedFinishThreadMutationOptions());
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -2781,6 +2804,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           worktreePath: nextThreadWorktreePath,
           createdAt: activeThread.createdAt,
         });
+        if (draftThread?.workflowMode === "guided") {
+          await api.guided.setThreadMode({
+            threadId: threadIdForSend,
+            workflowMode: "guided",
+          });
+          void queryClient.invalidateQueries({
+            queryKey: guidedQueryKeys.threadState(threadIdForSend),
+          });
+        }
         createdServerThreadForLocalDraft = true;
       }
 
@@ -2900,6 +2932,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
       createdAt: new Date().toISOString(),
     });
   };
+
+  const onFinishGuidedThread = useCallback(async () => {
+    if (!activeThreadId || !isServerThread) {
+      return;
+    }
+    try {
+      const result = await guidedFinishThreadMutation.mutateAsync({
+        threadId: activeThreadId,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: guidedQueryKeys.threadState(activeThreadId),
+      });
+      setGuidedFinishDialogOpen(false);
+      toastManager.add({
+        type: "success",
+        title: "Guided thread finalized",
+        description: `${result.subject} (${result.commitSha.slice(0, 7)})`,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Failed to finish guided thread",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    }
+  }, [activeThreadId, guidedFinishThreadMutation, isServerThread, queryClient]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -4283,15 +4341,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </div>
 
           {isGitRepo && (
-            <BranchToolbar
-              threadId={activeThread.id}
-              onEnvModeChange={onEnvModeChange}
-              envLocked={envLocked}
-              onComposerFocusRequest={scheduleComposerFocus}
-              {...(canCheckoutPullRequestIntoThread
-                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                : {})}
-            />
+            <>
+              {isServerThread && activeThreadWorkflowMode === "guided" ? (
+                <div className="mx-auto flex w-full max-w-3xl items-center justify-end px-5 pb-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setGuidedFinishDialogOpen(true);
+                    }}
+                  >
+                    Finish
+                  </Button>
+                </div>
+              ) : null}
+              <BranchToolbar
+                threadId={activeThread.id}
+                onEnvModeChange={onEnvModeChange}
+                envLocked={envLocked}
+                onComposerFocusRequest={scheduleComposerFocus}
+                {...(canCheckoutPullRequestIntoThread
+                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                  : {})}
+              />
+            </>
           )}
           {pullRequestDialogState ? (
             <PullRequestThreadDialog
@@ -4307,6 +4380,45 @@ export default function ChatView({ threadId }: ChatViewProps) {
               onPrepared={handlePreparedPullRequestThread}
             />
           ) : null}
+          <Dialog open={guidedFinishDialogOpen} onOpenChange={setGuidedFinishDialogOpen}>
+            <DialogPopup className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Finish Guided Thread</DialogTitle>
+                <DialogDescription>
+                  Squash the tracked guided commits into a single summary commit.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogPanel className="space-y-2 text-sm">
+                <p>
+                  {trackedGuidedCommitCount > 0
+                    ? `This will collapse ${trackedGuidedCommitCount} guided commit${trackedGuidedCommitCount === 1 ? "" : "s"} into one final commit.`
+                    : "This will first capture any remaining guided changes, then create one final commit."}
+                </p>
+                <p className="text-muted-foreground">
+                  If the branch is behind the project primary branch, guided mode will rebase it
+                  before the final squash commit is created.
+                </p>
+              </DialogPanel>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setGuidedFinishDialogOpen(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    void onFinishGuidedThread();
+                  }}
+                  disabled={guidedFinishThreadMutation.isPending}
+                >
+                  {guidedFinishThreadMutation.isPending ? "Finishing..." : "Finish"}
+                </Button>
+              </DialogFooter>
+            </DialogPopup>
+          </Dialog>
         </div>
         {/* end chat column */}
 
