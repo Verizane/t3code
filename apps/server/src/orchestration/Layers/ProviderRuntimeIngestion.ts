@@ -428,6 +428,33 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "content.delta": {
+      // Only surface coarse reasoning summaries in activities. Fine-grained
+      // reasoning_text deltas can be very high volume and overwhelm the work log.
+      if (event.payload.streamKind !== "reasoning_summary_text") {
+        return [];
+      }
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "task.progress",
+          summary: "Reasoning update",
+          payload: {
+            detail: truncateDetail(event.payload.delta),
+            streamKind: event.payload.streamKind,
+            ...(event.payload.summaryIndex !== undefined
+              ? { summaryIndex: event.payload.summaryIndex }
+              : {}),
+            ...(event.itemId ? { itemId: event.itemId } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "item.updated": {
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];

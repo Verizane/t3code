@@ -5,6 +5,7 @@ import readline from "node:readline";
 
 import {
   ApprovalRequestId,
+  DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   ProviderItemId,
   ProviderRequestKind,
@@ -348,7 +349,7 @@ function buildCodexCollaborationMode(input: {
   if (input.interactionMode === undefined) {
     return undefined;
   }
-  const model = normalizeCodexModelSlug(input.model) ?? "gpt-5.3-codex";
+  const model = normalizeCodexModelSlug(input.model) ?? CODEX_DEFAULT_MODEL;
   return {
     mode: input.interactionMode,
     settings: {

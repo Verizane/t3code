@@ -12,6 +12,7 @@ import type { Duplex } from "node:stream";
 import Mime from "@effect/platform-node/Mime";
 import {
   CommandId,
+  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ClientOrchestrationCommand,
   type OrchestrationCommand,
@@ -620,7 +621,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const bootstrapProjectTitle = path.basename(cwd) || "project";
         bootstrapProjectDefaultModelSelection = {
           provider: "codex" as const,
-          model: "gpt-5-codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
         };
         yield* orchestrationEngine.dispatch({
           type: "project.create",
@@ -635,7 +636,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         bootstrapProjectId = existingProject.id;
         bootstrapProjectDefaultModelSelection = existingProject.defaultModelSelection ?? {
           provider: "codex" as const,
-          model: "gpt-5-codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
         };
       }
 
