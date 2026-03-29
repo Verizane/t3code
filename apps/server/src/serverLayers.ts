@@ -117,6 +117,7 @@ export function makeServerRuntimeServicesLayer() {
     OrchestrationProjectionSnapshotQueryLive,
     checkpointStoreLayer,
     checkpointDiffQueryLayer,
+    GuidedThreadStateRepositoryLive,
     RuntimeReceiptBusLive,
   );
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
@@ -135,7 +136,6 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(GitCoreLive),
     Layer.provideMerge(textGenerationLayer),
     Layer.provideMerge(ProjectConfigRepositoryLive),
-    Layer.provideMerge(GuidedThreadStateRepositoryLive),
   );
   const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
     Layer.provideMerge(runtimeIngestionLayer),

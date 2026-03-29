@@ -157,6 +157,24 @@ const PersistedComposerDraftStoreStorage = Schema.Struct({
   state: PersistedComposerDraftStoreState,
 });
 
+function resolveDraftThreadEnvMode(input: {
+  workflowMode?: ThreadWorkflowMode | undefined;
+  worktreePath?: string | null | undefined;
+  envMode?: DraftThreadEnvMode | undefined;
+  fallbackEnvMode: DraftThreadEnvMode;
+}): DraftThreadEnvMode {
+  if (input.workflowMode === "guided") {
+    return "worktree";
+  }
+  if (input.envMode !== undefined) {
+    return input.envMode;
+  }
+  if (input.worktreePath) {
+    return "worktree";
+  }
+  return input.fallbackEnvMode;
+}
+
 export interface ComposerThreadDraftState {
   prompt: string;
   images: ComposerImageAttachment[];
@@ -803,7 +821,22 @@ function normalizePersistedDraftThreads(
             : "normal",
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
-        envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        envMode: resolveDraftThreadEnvMode({
+          workflowMode:
+            candidateDraftThread.workflowMode === "guided" ||
+            candidateDraftThread.workflowMode === "normal"
+              ? candidateDraftThread.workflowMode
+              : "normal",
+          worktreePath: normalizedWorktreePath,
+          envMode:
+            candidateDraftThread.envMode === "local" || candidateDraftThread.envMode === "worktree"
+              ? candidateDraftThread.envMode
+              : undefined,
+          fallbackEnvMode: normalizeDraftThreadEnvMode(
+            candidateDraftThread.envMode,
+            normalizedWorktreePath,
+          ),
+        }),
       };
     }
   }
@@ -1319,6 +1352,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options?.worktreePath === undefined
               ? (existingThread?.worktreePath ?? null)
               : (options.worktreePath ?? null);
+          const nextWorkflowMode =
+            options?.workflowMode ?? existingThread?.workflowMode ?? "normal";
           const nextDraftThread: DraftThreadState = {
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
@@ -1328,15 +1363,18 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
               options?.interactionMode ??
               existingThread?.interactionMode ??
               DEFAULT_INTERACTION_MODE,
-            workflowMode: options?.workflowMode ?? existingThread?.workflowMode ?? "normal",
+            workflowMode: nextWorkflowMode,
             branch:
               options?.branch === undefined
                 ? (existingThread?.branch ?? null)
                 : (options.branch ?? null),
             worktreePath: nextWorktreePath,
-            envMode:
-              options?.envMode ??
-              (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+            envMode: resolveDraftThreadEnvMode({
+              workflowMode: nextWorkflowMode,
+              worktreePath: nextWorktreePath,
+              envMode: options?.envMode,
+              fallbackEnvMode: existingThread?.envMode ?? "local",
+            }),
           };
           const hasSameProjectMapping = previousThreadIdForProject === threadId;
           const hasSameDraftThread =
@@ -1396,6 +1434,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options.worktreePath === undefined
               ? existing.worktreePath
               : (options.worktreePath ?? null);
+          const nextWorkflowMode = options.workflowMode ?? existing.workflowMode;
           const nextDraftThread: DraftThreadState = {
             projectId: nextProjectId,
             createdAt:
@@ -1404,11 +1443,15 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
                 : options.createdAt || existing.createdAt,
             runtimeMode: options.runtimeMode ?? existing.runtimeMode,
             interactionMode: options.interactionMode ?? existing.interactionMode,
-            workflowMode: options.workflowMode ?? existing.workflowMode,
+            workflowMode: nextWorkflowMode,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
-            envMode:
-              options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+            envMode: resolveDraftThreadEnvMode({
+              workflowMode: nextWorkflowMode,
+              worktreePath: nextWorktreePath,
+              envMode: options.envMode,
+              fallbackEnvMode: existing.envMode ?? "local",
+            }),
           };
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&

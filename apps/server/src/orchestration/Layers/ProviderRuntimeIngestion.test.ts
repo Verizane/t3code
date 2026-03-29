@@ -24,6 +24,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { GuidedThreadStateRepositoryLive } from "../../persistence/Layers/GuidedThreadStates.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   ProviderService,
@@ -39,6 +40,7 @@ import {
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { GuidedThreadStateRepository } from "../../persistence/Services/GuidedThreadStates.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
@@ -166,7 +168,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService,
+    OrchestrationEngineService | ProviderRuntimeIngestionService | GuidedThreadStateRepository,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -202,9 +204,12 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const guidedThreadStateRepositoryLayer = GuidedThreadStateRepositoryLive.pipe(
+      Layer.provideMerge(SqlitePersistenceMemory),
+    );
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
-      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(guidedThreadStateRepositoryLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
@@ -213,6 +218,9 @@ describe("ProviderRuntimeIngestion", () => {
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const guidedThreadStateRepository = await runtime.runPromise(
+      Effect.service(GuidedThreadStateRepository),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -279,6 +287,7 @@ describe("ProviderRuntimeIngestion", () => {
     return {
       engine,
       emit: provider.emit,
+      guidedThreadStateRepository,
       setProviderSession: provider.setSession,
       drain,
     };
@@ -1669,6 +1678,52 @@ describe("ProviderRuntimeIngestion", () => {
       );
     });
     expect(completionEvents).toHaveLength(1);
+  });
+
+  it("emits a guided diff completion on turn.completed when no diff update arrived first", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.guidedThreadStateRepository.upsert({
+        threadId: asThreadId("thread-1"),
+        workflowMode: "guided",
+        trackedCommitCount: 0,
+        updatedAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-guided-fallback"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-guided-fallback"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await harness.drain();
+    const events = await Effect.runPromise(
+      Stream.runCollect(harness.engine.readEvents(0)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      ),
+    );
+
+    const diffCompletion = events.find((event) => {
+      if (event.type !== "thread.turn-diff-completed") {
+        return false;
+      }
+      return (
+        event.payload.threadId === "thread-1" &&
+        event.payload.turnId === "turn-guided-fallback" &&
+        event.payload.status === "missing"
+      );
+    });
+
+    expect(diffCompletion).toBeDefined();
   });
 
   it("maps canonical request events into approval activities with requestKind", async () => {

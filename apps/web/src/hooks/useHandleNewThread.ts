@@ -48,6 +48,7 @@ export function useHandleNewThread() {
         workflowMode?: ThreadWorkflowMode;
       },
     ): Promise<void> => {
+      const nextEnvMode = options?.workflowMode === "guided" ? "worktree" : options?.envMode;
       const {
         clearProjectDraftThreadId,
         getDraftThread,
@@ -75,7 +76,9 @@ export function useHandleNewThread() {
             setDraftThreadContext(storedDraftThread.threadId, {
               ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
               ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+              ...(hasEnvModeOption || options?.workflowMode === "guided"
+                ? { envMode: nextEnvMode ?? "worktree" }
+                : {}),
               ...(hasWorkflowModeOption ? { workflowMode: options?.workflowMode } : {}),
             });
           }
@@ -101,7 +104,9 @@ export function useHandleNewThread() {
           setDraftThreadContext(routeThreadId, {
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(hasEnvModeOption || options?.workflowMode === "guided"
+              ? { envMode: nextEnvMode ?? "worktree" }
+              : {}),
             ...(hasWorkflowModeOption ? { workflowMode: options?.workflowMode } : {}),
           });
         }
@@ -116,7 +121,7 @@ export function useHandleNewThread() {
           createdAt,
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
-          envMode: options?.envMode ?? "local",
+          envMode: nextEnvMode ?? "local",
           workflowMode: options?.workflowMode ?? "normal",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });

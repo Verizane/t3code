@@ -671,6 +671,23 @@ describe("composerDraftStore project draft thread mapping", () => {
       envMode: "worktree",
     });
   });
+
+  it("forces guided draft threads into worktree mode", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "feature/base",
+      worktreePath: null,
+      workflowMode: "guided",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/base",
+      worktreePath: null,
+      workflowMode: "guided",
+      envMode: "worktree",
+    });
+  });
 });
 
 describe("composerDraftStore modelSelection", () => {

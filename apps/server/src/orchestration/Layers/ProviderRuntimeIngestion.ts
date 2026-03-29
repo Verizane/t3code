@@ -13,12 +13,13 @@ import {
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { GuidedThreadStateRepository } from "../../persistence/Services/GuidedThreadStates.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -531,6 +532,7 @@ const make = Effect.fn("make")(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const guidedThreadStateRepository = yield* GuidedThreadStateRepository;
   const serverSettingsService = yield* ServerSettingsService;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
@@ -550,6 +552,7 @@ const make = Effect.fn("make")(function* () {
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
+  const guidedTurnDiffCompletionKeys = yield* Ref.make(new Set<string>());
 
   const isGitRepoForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
@@ -667,6 +670,84 @@ const make = Effect.fn("make")(function* () {
 
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
+
+  const guidedTurnDiffCompletionKey = (threadId: ThreadId, turnId: TurnId) =>
+    providerTurnKey(threadId, turnId);
+
+  const hasGuidedTurnDiffCompletionBeenEmitted = (threadId: ThreadId, turnId: TurnId) =>
+    Ref.get(guidedTurnDiffCompletionKeys).pipe(
+      Effect.map((keys) => keys.has(guidedTurnDiffCompletionKey(threadId, turnId))),
+    );
+
+  const rememberGuidedTurnDiffCompletion = (threadId: ThreadId, turnId: TurnId) =>
+    Ref.update(guidedTurnDiffCompletionKeys, (keys) => {
+      const next = new Set(keys);
+      next.add(guidedTurnDiffCompletionKey(threadId, turnId));
+      return next;
+    });
+
+  const clearGuidedTurnDiffCompletionsForThread = (threadId: ThreadId) =>
+    Ref.update(guidedTurnDiffCompletionKeys, (keys) => {
+      const prefix = `${threadId}:`;
+      return new Set(Array.from(keys).filter((key) => !key.startsWith(prefix)));
+    });
+
+  const shouldEmitGuidedTurnDiffCompletion = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const guidedThreadState = yield* guidedThreadStateRepository
+      .getById(threadId)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    return guidedThreadState?.workflowMode === "guided";
+  });
+
+  const dispatchTurnDiffCompletion = Effect.fnUntraced(function* (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly thread: {
+      readonly id: ThreadId;
+      readonly checkpoints: ReadonlyArray<{
+        readonly turnId: TurnId | null;
+        readonly status: "ready" | "missing" | "error";
+        readonly checkpointTurnCount: number;
+      }>;
+    };
+    readonly turnId: TurnId;
+    readonly createdAt: string;
+  }) {
+    if (!(yield* isGitRepoForThread(input.thread.id))) {
+      return;
+    }
+
+    if (yield* hasGuidedTurnDiffCompletionBeenEmitted(input.thread.id, input.turnId)) {
+      return;
+    }
+
+    if (input.thread.checkpoints.some((checkpoint) => sameId(checkpoint.turnId, input.turnId))) {
+      return;
+    }
+
+    const assistantMessageId = MessageId.makeUnsafe(
+      `assistant:${input.event.itemId ?? input.event.turnId ?? input.event.eventId}`,
+    );
+    const maxTurnCount = input.thread.checkpoints.reduce(
+      (max, checkpoint) => Math.max(max, checkpoint.checkpointTurnCount),
+      0,
+    );
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: providerCommandId(input.event, "thread-turn-diff-complete"),
+      threadId: input.thread.id,
+      turnId: input.turnId,
+      completedAt: input.createdAt,
+      checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${input.event.eventId}`),
+      status: "missing",
+      files: [],
+      assistantMessageId,
+      checkpointTurnCount: maxTurnCount + 1,
+      createdAt: input.createdAt,
+    });
+
+    yield* rememberGuidedTurnDiffCompletion(input.thread.id, input.turnId);
+  });
 
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId);
@@ -1158,6 +1239,15 @@ const make = Effect.fn("make")(function* () {
           turnId,
           updatedAt: now,
         });
+
+        if (yield* shouldEmitGuidedTurnDiffCompletion(thread.id)) {
+          yield* dispatchTurnDiffCompletion({
+            event,
+            thread,
+            turnId,
+            createdAt: now,
+          });
+        }
       }
     }
 
@@ -1202,35 +1292,13 @@ const make = Effect.fn("make")(function* () {
 
     if (event.type === "turn.diff.updated") {
       const turnId = toTurnId(event.turnId);
-      if (turnId && (yield* isGitRepoForThread(thread.id))) {
-        // Skip if a checkpoint already exists for this turn. A real
-        // (non-placeholder) capture from CheckpointReactor should not
-        // be clobbered, and dispatching a duplicate placeholder for the
-        // same turnId would produce an unstable checkpointTurnCount.
-        if (thread.checkpoints.some((c) => c.turnId === turnId)) {
-          // Already tracked; no-op.
-        } else {
-          const assistantMessageId = MessageId.makeUnsafe(
-            `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-          );
-          const maxTurnCount = thread.checkpoints.reduce(
-            (max, c) => Math.max(max, c.checkpointTurnCount),
-            0,
-          );
-          yield* orchestrationEngine.dispatch({
-            type: "thread.turn.diff.complete",
-            commandId: providerCommandId(event, "thread-turn-diff-complete"),
-            threadId: thread.id,
-            turnId,
-            completedAt: now,
-            checkpointRef: CheckpointRef.makeUnsafe(`provider-diff:${event.eventId}`),
-            status: "missing",
-            files: [],
-            assistantMessageId,
-            checkpointTurnCount: maxTurnCount + 1,
-            createdAt: now,
-          });
-        }
+      if (turnId) {
+        yield* dispatchTurnDiffCompletion({
+          event,
+          thread,
+          turnId,
+          createdAt: now,
+        });
       }
     }
 

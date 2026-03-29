@@ -115,20 +115,16 @@ export const makeGuidedThreadService = Effect.gen(function* () {
         (entry) => entry.id === threadId && entry.deletedAt === null,
       );
       if (!thread) {
-        return yield* Effect.fail(
-          guidedError("resolveThreadContext", `Thread "${threadId}" was not found.`),
-        );
+        return yield* guidedError("resolveThreadContext", `Thread "${threadId}" was not found.`);
       }
 
       const project = readModel.projects.find(
         (entry) => entry.id === thread.projectId && entry.deletedAt === null,
       );
       if (!project) {
-        return yield* Effect.fail(
-          guidedError(
-            "resolveThreadContext",
-            `Project "${thread.projectId}" for thread "${threadId}" was not found.`,
-          ),
+        return yield* guidedError(
+          "resolveThreadContext",
+          `Project "${thread.projectId}" for thread "${threadId}" was not found.`,
         );
       }
 
@@ -143,15 +139,27 @@ export const makeGuidedThreadService = Effect.gen(function* () {
         })),
       });
       if (!cwd) {
-        return yield* Effect.fail(
-          guidedError(
-            "resolveThreadContext",
-            `Thread "${threadId}" does not have a workspace path.`,
-          ),
+        return yield* guidedError(
+          "resolveThreadContext",
+          `Thread "${threadId}" does not have a workspace path.`,
         );
       }
 
       return { thread, project, cwd };
+    });
+
+  const resolveGuidedThreadContext = (
+    threadId: ThreadId,
+  ): Effect.Effect<ThreadContext, GuidedThreadServiceError> =>
+    Effect.gen(function* () {
+      const context = yield* resolveThreadContext(threadId);
+      if (context.thread.worktreePath === null) {
+        return yield* guidedError(
+          "resolveGuidedThreadContext",
+          `Guided thread "${threadId}" requires a dedicated worktree.`,
+        );
+      }
+      return context;
     });
 
   const getProjectConfig: GuidedThreadServiceShape["getProjectConfig"] = (projectId) =>
@@ -161,9 +169,7 @@ export const makeGuidedThreadService = Effect.gen(function* () {
         (entry) => entry.id === projectId && entry.deletedAt === null,
       );
       if (!project) {
-        return yield* Effect.fail(
-          guidedError("getProjectConfig", `Project "${projectId}" was not found.`),
-        );
+        return yield* guidedError("getProjectConfig", `Project "${projectId}" was not found.`);
       }
 
       const row = yield* projectConfigRepository
@@ -323,7 +329,7 @@ export const makeGuidedThreadService = Effect.gen(function* () {
         return state;
       }
 
-      const { cwd, project } = yield* resolveThreadContext(input.threadId);
+      const { cwd, project } = yield* resolveGuidedThreadContext(input.threadId);
       const projectConfig = yield* getProjectConfig(project.id);
       const status = yield* gitCore
         .statusDetails(cwd)
@@ -416,6 +422,7 @@ export const makeGuidedThreadService = Effect.gen(function* () {
   const setThreadMode: GuidedThreadServiceShape["setThreadMode"] = (input) =>
     Effect.gen(function* () {
       const current = yield* getThreadState(input.threadId);
+      const { thread } = yield* resolveThreadContext(input.threadId);
       const updatedAt = new Date().toISOString();
 
       if (input.workflowMode === "normal") {
@@ -432,6 +439,13 @@ export const makeGuidedThreadService = Effect.gen(function* () {
           trackedCommitCount: 0,
           updatedAt,
         } satisfies GuidedThreadState;
+      }
+
+      if (thread.worktreePath === null) {
+        return yield* guidedError(
+          "setThreadMode",
+          `Guided thread "${input.threadId}" requires a dedicated worktree.`,
+        );
       }
 
       const nextState: GuidedThreadState = {
@@ -452,13 +466,14 @@ export const makeGuidedThreadService = Effect.gen(function* () {
 
   const finishThread: GuidedThreadServiceShape["finishThread"] = (input) =>
     Effect.gen(function* () {
-      const { thread, cwd } = yield* resolveThreadContext(input.threadId);
+      const { thread, cwd } = yield* resolveGuidedThreadContext(input.threadId);
       const projectConfig = yield* getProjectConfig(thread.projectId);
 
       let state = yield* getThreadState(input.threadId);
       if (state.workflowMode !== "guided") {
-        return yield* Effect.fail(
-          guidedError("finishThread", `Thread "${input.threadId}" is not in guided mode.`),
+        return yield* guidedError(
+          "finishThread",
+          `Thread "${input.threadId}" is not in guided mode.`,
         );
       }
 
@@ -469,9 +484,7 @@ export const makeGuidedThreadService = Effect.gen(function* () {
         appendSuccessActivity: false,
       });
       if (state.trackedCommitCount <= 0) {
-        return yield* Effect.fail(
-          guidedError("finishThread", "There are no guided commits to squash."),
-        );
+        return yield* guidedError("finishThread", "There are no guided commits to squash.");
       }
 
       yield* rebaseOntoPrimary({
@@ -487,11 +500,9 @@ export const makeGuidedThreadService = Effect.gen(function* () {
       });
       const oldestCommit = trackedCommits[0];
       if (!oldestCommit || trackedCommits.length !== state.trackedCommitCount) {
-        return yield* Effect.fail(
-          guidedError(
-            "finishThread",
-            "Tracked guided commits could not be resolved from the current branch.",
-          ),
+        return yield* guidedError(
+          "finishThread",
+          "Tracked guided commits could not be resolved from the current branch.",
         );
       }
 
@@ -507,16 +518,12 @@ export const makeGuidedThreadService = Effect.gen(function* () {
           ),
         )).stdout.trim();
       if (parentCommit.length === 0) {
-        return yield* Effect.fail(
-          guidedError("finishThread", "Failed to resolve the guided commit base."),
-        );
+        return yield* guidedError("finishThread", "Failed to resolve the guided commit base.");
       }
 
       const rangeContext = yield* readCommitRangeContext({ cwd, parentCommit });
       if (rangeContext.stagedSummary.length === 0 && rangeContext.stagedPatch.length === 0) {
-        return yield* Effect.fail(
-          guidedError("finishThread", "Guided commits did not produce a diff."),
-        );
+        return yield* guidedError("finishThread", "Guided commits did not produce a diff.");
       }
 
       const modelSelection: ModelSelection = yield* serverSettingsService.getSettings.pipe(
@@ -655,7 +662,7 @@ export const makeGuidedThreadService = Effect.gen(function* () {
         yield* ignoreFailure(guidedThreadStateRepository.deleteById(event.payload.threadId));
         return;
       }
-      if (event.type !== "thread.turn-diff-completed") {
+      if (event.type !== "thread.turn-diff-completed" || event.payload.status !== "missing") {
         return;
       }
 
