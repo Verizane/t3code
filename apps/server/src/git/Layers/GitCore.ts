@@ -781,6 +781,11 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   });
 
   const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (cwd: string) {
+    const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.catch(() => Effect.succeed(false)));
+    if (!cwdExists) {
+      return null;
+    }
+
     const upstreamRef = yield* runGitStdout(
       "GitCore.resolveCurrentUpstream",
       cwd,
@@ -1104,6 +1109,24 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   });
 
   const statusDetails: GitCoreShape["statusDetails"] = Effect.fn("statusDetails")(function* (cwd) {
+    const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.catch(() => Effect.succeed(false)));
+    if (!cwdExists) {
+      return {
+        branch: null,
+        upstreamRef: null,
+        hasWorkingTreeChanges: false,
+        workingTree: {
+          files: [],
+          insertions: 0,
+          deletions: 0,
+        },
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        pr: null,
+      };
+    }
+
     yield* refreshStatusUpstreamIfStale(cwd).pipe(Effect.ignoreCause({ log: true }));
 
     const [statusStdout, unstagedNumstatStdout, stagedNumstatStdout] = yield* Effect.all(
@@ -1560,6 +1583,13 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     });
 
   const listBranches: GitCoreShape["listBranches"] = Effect.fn("listBranches")(function* (input) {
+    const cwdExists = yield* fileSystem
+      .exists(input.cwd)
+      .pipe(Effect.catch(() => Effect.succeed(false)));
+    if (!cwdExists) {
+      return { branches: [], isRepo: false, hasOriginRemote: false };
+    }
+
     const branchRecencyPromise = readBranchRecency(input.cwd).pipe(
       Effect.catch(() => Effect.succeed(new Map<string, number>())),
     );

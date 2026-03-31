@@ -152,7 +152,7 @@ it.layer(TestLayer)("git integration", (it) => {
     it.effect("caps captured output when maxOutputBytes is exceeded", () =>
       Effect.gen(function* () {
         const result = yield* runShellCommand({
-          command: `node -e "process.stdout.write('x'.repeat(2000))"`,
+          command: `${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(2000))"`,
           cwd: process.cwd(),
           timeoutMs: 10_000,
           maxOutputBytes: 128,
@@ -1691,6 +1691,37 @@ it.layer(TestLayer)("git integration", (it) => {
           expect(details.aheadCount).toBe(0);
           expect(details.behindCount).toBe(1);
         }),
+    );
+
+    it.effect("treats missing workspaces as unavailable instead of throwing", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const missing = path.join(tmp, "missing-workspace");
+        const core = yield* GitCore;
+
+        const status = yield* core.statusDetails(missing);
+        expect(status).toEqual({
+          branch: null,
+          upstreamRef: null,
+          hasWorkingTreeChanges: false,
+          workingTree: {
+            files: [],
+            insertions: 0,
+            deletions: 0,
+          },
+          hasUpstream: false,
+          aheadCount: 0,
+          behindCount: 0,
+          pr: null,
+        });
+
+        const branches = yield* core.listBranches({ cwd: missing });
+        expect(branches).toEqual({
+          branches: [],
+          isRepo: false,
+          hasOriginRemote: false,
+        });
+      }),
     );
 
     it.effect("prepares commit context by auto-staging and creates commit", () =>

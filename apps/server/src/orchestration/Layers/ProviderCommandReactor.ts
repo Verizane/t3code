@@ -11,7 +11,18 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
-import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
+import {
+  Cache,
+  Cause,
+  Duration,
+  Effect,
+  Equal,
+  FileSystem,
+  Layer,
+  Option,
+  Schema,
+  Stream,
+} from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -151,6 +162,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitCore;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -216,6 +228,9 @@ const make = Effect.gen(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
     return readModel.threads.find((entry) => entry.id === threadId);
   });
+
+  const workspacePathExists = (cwd: string) =>
+    fileSystem.exists(cwd).pipe(Effect.catch(() => Effect.succeed(false)));
 
   const ensureSessionForThread = Effect.fnUntraced(function* (
     threadId: ThreadId,
@@ -291,6 +306,9 @@ const make = Effect.gen(function* () {
 
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" ? thread.id : null;
+    if (effectiveCwd !== undefined && !(yield* workspacePathExists(effectiveCwd))) {
+      return existingSessionThreadId ?? threadId;
+    }
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged =
@@ -369,6 +387,21 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    const workspaceCwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: (yield* orchestrationEngine.getReadModel()).projects,
+    });
+    if (workspaceCwd !== undefined && !(yield* workspacePathExists(workspaceCwd))) {
+      yield* appendProviderFailureActivity({
+        threadId: input.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail: `Workspace '${workspaceCwd}' no longer exists.`,
+        turnId: null,
+        createdAt: input.createdAt,
+      });
+      return;
+    }
     yield* ensureSessionForThread(
       input.threadId,
       input.createdAt,
@@ -425,6 +458,9 @@ const make = Effect.gen(function* () {
 
     const oldBranch = input.branch;
     const cwd = input.worktreePath;
+    if (!(yield* workspacePathExists(cwd))) {
+      return;
+    }
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
       const { textGenerationModelSelection: modelSelection } =
@@ -469,6 +505,9 @@ const make = Effect.gen(function* () {
     readonly titleSeed?: string;
   }) {
     const attachments = input.attachments ?? [];
+    if (!(yield* workspacePathExists(input.cwd))) {
+      return;
+    }
     yield* Effect.gen(function* () {
       const { textGenerationModelSelection: modelSelection } =
         yield* serverSettingsService.getSettings;
